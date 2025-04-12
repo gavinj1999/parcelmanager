@@ -1,0 +1,62 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\ParcelType;
+use App\Models\Round;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+
+class ParcelTypeController extends Controller
+{
+    public function index()
+    {
+        return Inertia::render('ParcelTypes/Index', [
+            'parcelTypes' => ParcelType::whereHas('round', function ($query) {
+                $query->where('user_id', auth()->id());
+            })->with('round')->get(),
+            'rounds' => Round::where('user_id', auth()->id())->get(),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'round_id' => 'required|exists:rounds,id',
+            'name' => 'required|string|max:255',
+            'max_weight' => 'required|numeric|min:0',
+            'max_length' => 'required|numeric|min:0',
+            'rate' => 'required|numeric|min:0',
+        ]);
+
+        ParcelType::create($validated);
+
+        return redirect()->route('parcel-types.index');
+    }
+
+    public function update(Request $request, ParcelType $parcelType)
+    {
+        $this->authorize('update', $parcelType->round);
+
+        $validated = $request->validate([
+            'round_id' => 'required|exists:rounds,id',
+            'name' => 'required|string|max:255',
+            'max_weight' => 'required|numeric|min:0',
+            'max_length' => 'required|numeric|min:0',
+            'rate' => 'required|numeric|min:0',
+        ]);
+
+        $parcelType->update($validated);
+
+        return redirect()->route('parcel-types.index');
+    }
+
+    public function destroy(ParcelType $parcelType)
+    {
+        $this->authorize('delete', $parcelType->round);
+
+        $parcelType->delete();
+
+        return redirect()->route('parcel-types.index');
+    }
+}
