@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import Modal from '@/Components/Modal.vue';
 import AppLayout from '@/layouts/AppLayout.vue';
@@ -13,11 +13,44 @@ const breadcrumbs: BreadcrumbItem[] = [
   },
 ];
 
+// Define props with a fallback for datePeriods
 const props = defineProps({
-  activities: Array,
-  parcelTypes: Array,
-  rounds: Array,
-  datePeriods: Array,
+  activities: { type: Array, default: () => [] },
+  parcelTypes: { type: Array, default: () => [] },
+  rounds: { type: Array, default: () => [] },
+  datePeriods: { type: Array, default: () => [] }, // Default to empty array
+  date_periods: { type: Array, default: () => [] }, // Fallback for snake_case
+});
+
+// Debug: Log all props to verify what's being passed
+onMounted(() => {
+  console.log('All props on mount:', props);
+  console.log('datePeriods on mount:', props.datePeriods);
+  console.log('date_periods on mount:', props.date_periods);
+});
+
+// Loading state to ensure props are ready
+const isLoading = ref(true);
+onMounted(() => {
+  // Immediately check if datePeriods or date_periods is available
+  if (props.datePeriods?.length || props.date_periods?.length) {
+    isLoading.value = false;
+  } else {
+    // Watch for changes in props if initially undefined
+    const unwatch = watch(
+      () => [props.datePeriods, props.date_periods],
+      ([newDatePeriods, newDatePeriodsSnake]) => {
+        if (newDatePeriods?.length || newDatePeriodsSnake?.length) {
+          isLoading.value = false;
+          unwatch();
+        }
+      }
+    );
+    // Fallback after 2 seconds to prevent hanging
+    setTimeout(() => {
+      isLoading.value = false;
+    }, 2000);
+  }
 });
 
 // Access flash messages from Inertia (server-side)
@@ -66,7 +99,6 @@ function activity_date(info) {
 }
 
 // Watch for changes in round_id to update quantities
-import { watch } from 'vue';
 watch(() => defaultForm.value.round_id, () => {
   updateQuantities();
 });
@@ -281,12 +313,23 @@ const calculateTotalValue = (activity) => {
 };
 
 // Period filter for Activity Summary (checkbox dropdown)
+// Use date_periods if datePeriods is not available
+const safeDatePeriods = computed(() => {
+  const periods = props.datePeriods?.length ? props.datePeriods : props.date_periods;
+  if (!periods || !Array.isArray(periods)) return [];
+  return periods.filter(period => period && typeof period === 'object' && 'id' in period);
+});
+
 // Find the default period containing today's date (2025-04-13)
-const today = moment('2025-04-13'); // Use current date for testing
-const defaultPeriod = props.datePeriods.find(period =>
-  today.isBetween(period.start_date, period.end_date, undefined, '[]')
-);
-const selectedPeriodIds = ref(defaultPeriod ? [String(defaultPeriod.id)] : []);
+const today = moment('2025-04-13'); // Use moment() for current date in production
+const defaultPeriod = computed(() => {
+  if (!safeDatePeriods.value.length) return null;
+  return safeDatePeriods.value.find(period =>
+    today.isBetween(moment(period.start_date), moment(period.end_date), undefined, '[]')
+  ) || null;
+});
+
+const selectedPeriodIds = ref<string[]>(defaultPeriod.value ? [String(defaultPeriod.value.id)] : []);
 
 // Checkbox dropdown state
 const showPeriodDropdown = ref(false);
@@ -295,7 +338,7 @@ const showPeriodDropdown = ref(false);
 const handleAllPeriodsChange = () => {
   if (selectedPeriodIds.value.includes('all')) {
     selectedPeriodIds.value = ['all'];
-  } else if (selectedPeriodIds.value.length === props.datePeriods.length) {
+  } else if (safeDatePeriods.value.length && selectedPeriodIds.value.length === safeDatePeriods.value.length) {
     selectedPeriodIds.value = ['all'];
   } else {
     selectedPeriodIds.value = [];
@@ -307,7 +350,7 @@ const handlePeriodChange = () => {
   if (selectedPeriodIds.value.includes('all')) {
     selectedPeriodIds.value = selectedPeriodIds.value.filter(id => id !== 'all');
   }
-  if (selectedPeriodIds.value.length === props.datePeriods.length) {
+  if (safeDatePeriods.value.length && selectedPeriodIds.value.length === safeDatePeriods.value.length) {
     selectedPeriodIds.value = ['all'];
   }
 };
@@ -316,8 +359,8 @@ const handlePeriodChange = () => {
 const filteredActivitySummary = computed(() => {
   const includeAll = selectedPeriodIds.value.length === 0 || selectedPeriodIds.value.includes('all');
   const periods = includeAll
-    ? props.datePeriods
-    : props.datePeriods.filter(period => selectedPeriodIds.value.includes(String(period.id)));
+    ? safeDatePeriods.value
+    : safeDatePeriods.value.filter(period => selectedPeriodIds.value.includes(String(period.id)));
 
   // Map activities to their corresponding period
   const summaryByDate = {};
@@ -326,8 +369,8 @@ const filteredActivitySummary = computed(() => {
     const dateStr = activity.activity_date;
 
     // Find the period this activity belongs to
-    const activityPeriod = props.datePeriods.find(period =>
-      date.isBetween(period.start_date, period.end_date, undefined, '[]')
+    const activityPeriod = safeDatePeriods.value.find(period =>
+      date.isBetween(moment(period.start_date), moment(period.end_date), undefined, '[]')
     );
 
     // Skip if the activity's period is not in the selected periods
@@ -407,399 +450,410 @@ const sortBy = (key) => {
     <div class="p-6 max-w-7xl mx-auto">
       <h1 class="text-2xl font-bold mb-6 text-gray-100">Activities</h1>
 
-      <!-- Server-side Flash Message -->
-      <div v-if="showFlash && flash.success" class="mb-6 p-4 bg-green-700 text-white rounded-lg flex items-center animate-fade-in">
-        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-        </svg>
-        <span>{{ flash.success }}</span>
-        <button @click="showFlash = false" class="ml-auto text-white hover:text-gray-200">×</button>
+      <!-- Loading State -->
+      <div v-if="isLoading" class="text-gray-400 text-center mb-4">
+        Loading periods...
       </div>
 
-      <!-- Local Flash Message -->
-      <div v-if="showLocalFlash && localFlash?.error" class="mb-6 p-4 bg-red-700 text-white rounded-lg flex items-center animate-fade-in">
-        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-        </svg>
-        <span>{{ localFlash.error }}</span>
-        <button @click="showLocalFlash = false; localFlash = null" class="ml-auto text-white hover:text-gray-200">×</button>
-      </div>
+      <div v-else>
+        <!-- Server-side Flash Message -->
+        <div v-if="showFlash && flash?.success" class="mb-6 p-4 bg-green-700 text-white rounded-lg flex items-center animate-fade-in">
+          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+          </svg>
+          <span>{{ flash.success }}</span>
+          <button @click="showFlash = false" class="ml-auto text-white hover:text-gray-200">×</button>
+        </div>
 
-      <!-- Side-by-Side Container -->
-      <div class="flex flex-wrap -mx-4 mb-8">
-        <!-- Paste Manifest HTML -->
-        <div class="w-full md:w-1/2 px-4 mb-6 md:mb-0">
-          <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
-            <h2 class="text-xl font-semibold text-gray-100 mb-4">Paste Manifest HTML</h2>
-            <textarea
-              v-model="htmlInput"
-              placeholder="Paste the HTML table here..."
-              class="w-full h-32 border rounded p-2 bg-gray-900 text-gray-200 placeholder-gray-400 mb-4 focus:ring-2 focus:ring-blue-500"
-            ></textarea>
-            <div class="flex justify-end relative group">
-              <button
-                @click="parseHtml"
-                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                :disabled="!htmlInput || !defaultForm.round_id || isParsing"
-              >
-                {{ isParsing ? 'Parsing...' : 'Parse HTML' }}
-              </button>
-              <span
-                v-if="!htmlInput || !defaultForm.round_id"
-                class="absolute bottom-full mb-2 hidden group-hover:block px-2 py-1 text-sm text-gray-100 bg-gray-700 rounded"
-              >
-                Select a round and enter HTML to enable
-              </span>
+        <!-- Local Flash Message -->
+        <div v-if="showLocalFlash && localFlash?.error" class="mb-6 p-4 bg-red-700 text-white rounded-lg flex items-center animate-fade-in">
+          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+          </svg>
+          <span>{{ localFlash.error }}</span>
+          <button @click="showLocalFlash = false; localFlash = null" class="ml-auto text-white hover:text-gray-200">×</button>
+        </div>
+
+        <!-- Side-by-Side Container -->
+        <div class="flex flex-wrap -mx-4 mb-8">
+          <!-- Paste Manifest HTML -->
+          <div class="w-full md:w-1/2 px-4 mb-6 md:mb-0">
+            <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
+              <h2 class="text-xl font-semibold text-gray-100 mb-4">Paste Manifest HTML</h2>
+              <textarea
+                v-model="htmlInput"
+                placeholder="Paste the HTML table here..."
+                class="w-full h-32 border rounded p-2 bg-gray-900 text-gray-200 placeholder-gray-400 mb-4 focus:ring-2 focus:ring-blue-500"
+              ></textarea>
+              <div class="flex justify-end relative group">
+                <button
+                  @click="parseHtml"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                  :disabled="!htmlInput || !defaultForm.round_id || isParsing"
+                >
+                  {{ isParsing ? 'Parsing...' : 'Parse HTML' }}
+                </button>
+                <span
+                  v-if="!htmlInput || !defaultForm.round_id"
+                  class="absolute bottom-full mb-2 hidden group-hover:block px-2 py-1 text-sm text-gray-100 bg-gray-700 rounded"
+                >
+                  Select a round and enter HTML to enable
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Record Daily Activities -->
+          <div class="w-full md:w-1/2 px-4">
+            <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
+              <h2 class="text-xl font-semibold text-gray-100 mb-4">Record Daily Activities</h2>
+              <div v-if="!props.rounds.length" class="mb-4 p-4 bg-gray-800 text-gray-100 rounded-lg">
+                No rounds available. Please create a round first.
+              </div>
+              <form v-else @submit.prevent="submitDefaultForm">
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
+                  <input
+                    v-model="defaultForm.activity_date"
+                    type="date"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-100 mb-1">Round</label>
+                  <select
+                    v-model="defaultForm.round_id"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="" disabled>Select a round</option>
+                    <option v-for="round in rounds" :key="round.id" :value="round.id">
+                      {{ round.name }}
+                    </option>
+                  </select>
+                </div>
+                <div v-if="selectedRound" class="mb-4">
+                  <h3 class="text-sm font-medium text-gray-100 mb-2">Parcel Types (Round {{ selectedRound.name }})</h3>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div
+                      v-for="(quantity, index) in defaultForm.quantities"
+                      :key="quantity.parcel_type_id"
+                      class="flex items-center"
+                    >
+                      <label class="w-2/3 text-sm text-gray-100 truncate" :title="selectedRound.parcel_types[index].name">
+                        {{ selectedRound.parcel_types[index].name }}
+                      </label>
+                      <input
+                        v-model.number="defaultForm.quantities[index].quantity"
+                        type="number"
+                        min="0"
+                        class="w-1/3 border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <button
+                    type="submit"
+                    class="bg-blue-6hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                    :disabled="!defaultForm.round_id || isSubmitting"
+                  >
+                    {{ isSubmitting ? 'Saving...' : 'Record Activities' }}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
 
-        <!-- Record Daily Activities -->
-        <div class="w-full md:w-1/2 px-4">
-          <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
-            <h2 class="text-xl font-semibold text-gray-100 mb-4">Record Daily Activities</h2>
-            <div v-if="!props.rounds.length" class="mb-4 p-4 bg-gray-800 text-gray-100 rounded-lg">
-              No rounds available. Please create a round first.
+        <!-- Monetary Value per Period Table -->
+        <h2 class="text-lg font-semibold text-gray-100 mb-4">Monetary Value per Period</h2>
+        <div class="overflow-x-auto mb-8">
+          <table class="w-full border bg-gray-900 rounded-lg">
+            <thead>
+              <tr class="bg-gray-800 text-gray-100">
+                <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('period')">Period</th>
+                <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('totalValue')">Total Value (£)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="period in sortedMonetaryValuePerPeriod" :key="period.period" class="border-t hover:bg-gray-800">
+                <td class="p-3">{{ period.period }}</td>
+                <td class="p-3">{{ period.totalValue }}</td>
+              </tr>
+              <tr v-if="!monetaryValuePerPeriod.length" class="border-t">
+                <td colspan="2" class="p-3 text-gray-400 text-center">No data available</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Activity Summary Table with Checkbox Period Filter -->
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-semibold text-gray-100">Activity Summary</h2>
+          <div class="flex items-center space-x-3">
+            <div class="relative">
+              <button
+                @click="showPeriodDropdown = !showPeriodDropdown"
+                class="border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 w-64 text-left"
+                :disabled="!safeDatePeriods.length"
+              >
+                {{ selectedPeriodIds.length === 0 || selectedPeriodIds.includes('all') ? 'All Periods' : `${selectedPeriodIds.length} Period(s) Selected` }}
+                <span class="absolute right-2 top-1/2 transform -translate-y-1/2">▼</span>
+              </button>
+              <div
+                v-if="showPeriodDropdown && safeDatePeriods.length"
+                class="absolute z-10 mt-1 w-64 bg-gray-800 border rounded shadow-lg max-h-60 overflow-y-auto"
+              >
+                <label class="block p-2 hover:bg-gray-700">
+                  <input
+                    type="checkbox"
+                    value="all"
+                    v-model="selectedPeriodIds"
+                    @change="handleAllPeriodsChange"
+                    class="mr-2"
+                  />
+                  All Periods
+                </label>
+                <label v-for="period in safeDatePeriods" :key="period.id" class="block p-2 hover:bg-gray-700">
+                  <input
+                    type="checkbox"
+                    :value="String(period.id)"
+                    v-model="selectedPeriodIds"
+                    @change="handlePeriodChange"
+                    class="mr-2"
+                  />
+                  {{ period.name || 'Unknown Period' }}
+                </label>
+              </div>
+              <div v-if="showPeriodDropdown && !safeDatePeriods.length" class="absolute z-10 mt-1 w-64 bg-gray-800 border rounded shadow-lg p-2 text-gray-400">
+                No periods available
+              </div>
             </div>
-            <form v-else @submit.prevent="submitDefaultForm">
+            <button @click="openAddModal" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200">
+              Add Activity
+            </button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full border bg-gray-900 rounded-lg">
+            <thead>
+              <tr class="bg-gray-800 text-gray-100">
+                <th class="p-3 text-left">Date</th>
+                <th class="p-3 text-left">Total Quantity</th>
+                <th class="p-3 text-left">Total Value (£)</th>
+                <th class="p-3 text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="summary in filteredActivitySummary" :key="summary.date" class="border-t hover:bg-gray-800">
+                <td class="p-3">{{ activity_date(summary.date) }}</td>
+                <td class="p-3">{{ summary.totalQuantity }}</td>
+                <td class="p-3">{{ summary.totalValue }}</td>
+                <td class="p-3">
+                  <!-- Placeholder for future actions -->
+                </td>
+              </tr>
+              <tr v-if="!filteredActivitySummary.length" class="border-t">
+                <td colspan="4" class="p-3 text-gray-400 text-center">No activities for selected periods</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Modal for Unknown Parcel Types -->
+        <Modal :show="showUnknownModal" title="Unknown Parcel Types Detected" @close="showUnknownModal = false">
+          <div class="p-6">
+            <p class="text-gray-100 mb-6">The following parcel types were found in the HTML but do not exist in the selected round. Please choose to create them or ignore them.</p>
+            <div v-for="(type, index) in unknownParcelTypes" :key="type.name" class="mb-6 p-4 bg-gray-800 rounded-lg">
+              <h4 class="text-gray-100 font-semibold mb-2">{{ type.name }} (Quantity: {{ type.quantity }})</h4>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-100 mb-1">Max Weight (kg)</label>
+                  <input
+                    v-model.number="unknownParcelTypes[index].max_weight"
+                    type="number"
+                    step="0.01"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-100 mb-1">Max Length (cm)</label>
+                  <input
+                    v-model.number="unknownParcelTypes[index].max_length"
+                    type="number"
+                    step="0.01"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-100 mb-1">Rate (£)</label>
+                  <input
+                    v-model.number="unknownParcelTypes[index].rate"
+                    type="number"
+                    step="0.01"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+            <div class="flex justify-end space-x-3">
+              <button
+                @click="showUnknownModal = false"
+                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                @click="ignoreUnknownParcelTypes"
+                class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded transition duration-200"
+              >
+                Ignore
+              </button>
+              <button
+                @click="createUnknownParcelTypes"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <!-- Add Modal -->
+        <Modal :show="showAddModal" title="Add Activity" @close="showAddModal = false">
+          <div class="p-6">
+            <form @submit.prevent="submitForm">
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
+                <select
+                  v-model="form.parcel_type_id"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="" disabled>Select a parcel type</option>
+                  <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
+                    {{ type.name }} ({{ type.round.name }})
+                  </option>
+                </select>
+              </div>
               <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
                 <input
-                  v-model="defaultForm.activity_date"
+                  v-model="form.activity_date"
                   type="date"
                   class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
                   required
                 />
               </div>
               <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-100 mb-1">Round</label>
-                <select
-                  v-model="defaultForm.round_id"
+                <label class="block text-sm font-medium text-gray-100 mb-1">Quantity</label>
+                <input
+                  v-model="form.quantity"
+                  type="number"
+                  min="0"
                   class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
                   required
+                />
+              </div>
+              <div class="flex justify-end space-x-3">
+                <button
+                  @click="showAddModal = false"
+                  class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
                 >
-                  <option value="" disabled>Select a round</option>
-                  <option v-for="round in rounds" :key="round.id" :value="round.id">
-                    {{ round.name }}
-                  </option>
-                </select>
-              </div>
-              <div v-if="selectedRound" class="mb-4">
-                <h3 class="text-sm font-medium text-gray-100 mb-2">Parcel Types (Round {{ selectedRound.name }})</h3>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div
-                    v-for="(quantity, index) in defaultForm.quantities"
-                    :key="quantity.parcel_type_id"
-                    class="flex items-center"
-                  >
-                    <label class="w-2/3 text-sm text-gray-100 truncate" :title="selectedRound.parcel_types[index].name">
-                      {{ selectedRound.parcel_types[index].name }}
-                    </label>
-                    <input
-                      v-model.number="defaultForm.quantities[index].quantity"
-                      type="number"
-                      min="0"
-                      class="w-1/3 border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="flex justify-end">
+                  Cancel
+                </button>
                 <button
                   type="submit"
-                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                  :disabled="!defaultForm.round_id || isSubmitting"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
                 >
-                  {{ isSubmitting ? 'Saving...' : 'Record Activities' }}
+                  Save
                 </button>
               </div>
             </form>
           </div>
-        </div>
-      </div>
+        </Modal>
 
-      <!-- Monetary Value per Period Table -->
-      <h2 class="text-lg font-semibold text-gray-100 mb-4">Monetary Value per Period</h2>
-      <div class="overflow-x-auto mb-8">
-        <table class="w-full border bg-gray-900 rounded-lg">
-          <thead>
-            <tr class="bg-gray-800 text-gray-100">
-              <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('period')">Period</th>
-              <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('totalValue')">Total Value (£)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="period in sortedMonetaryValuePerPeriod" :key="period.period" class="border-t hover:bg-gray-800">
-              <td class="p-3">{{ period.period }}</td>
-              <td class="p-3">{{ period.totalValue }}</td>
-            </tr>
-            <tr v-if="!monetaryValuePerPeriod.length" class="border-t">
-              <td colspan="2" class="p-3 text-gray-400 text-center">No data available</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Activity Summary Table with Checkbox Period Filter -->
-      <div class="flex justify-between items-center mb-4">
-        <h2 class="text-lg font-semibold text-gray-100">Activity Summary</h2>
-        <div class="flex items-center space-x-3">
-          <div class="relative">
-            <button
-              @click="showPeriodDropdown = !showPeriodDropdown"
-              class="border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 w-64 text-left"
-            >
-              {{ selectedPeriodIds.length === 0 || selectedPeriodIds.includes('all') ? 'All Periods' : `${selectedPeriodIds.length} Period(s) Selected` }}
-              <span class="absolute right-2 top-1/2 transform -translate-y-1/2">▼</span>
-            </button>
-            <div
-              v-if="showPeriodDropdown"
-              class="absolute z-10 mt-1 w-64 bg-gray-800 border rounded shadow-lg max-h-60 overflow-y-auto"
-            >
-              <label class="block p-2 hover:bg-gray-700">
+        <!-- Edit Modal -->
+        <Modal :show="showEditModal" title="Edit Activity" @close="showEditModal = false">
+          <div class="p-6">
+            <form @submit.prevent="submitForm">
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
+                <select
+                  v-model="form.parcel_type_id"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="" disabled>Select a parcel type</option>
+                  <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
+                    {{ type.name }} ({{ type.round.name }})
+                  </option>
+                </select>
+              </div>
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
                 <input
-                  type="checkbox"
-                  value="all"
-                  v-model="selectedPeriodIds"
-                  @change="handleAllPeriodsChange"
-                  class="mr-2"
-                />
-                All Periods
-              </label>
-              <label v-for="period in datePeriods" :key="period.id" class="block p-2 hover:bg-gray-700">
-                <input
-                  type="checkbox"
-                  :value="String(period.id)"
-                  v-model="selectedPeriodIds"
-                  @change="handlePeriodChange"
-                  class="mr-2"
-                />
-                {{ period.name }}
-              </label>
-            </div>
-          </div>
-          <button @click="openAddModal" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200">
-            Add Activity
-          </button>
-        </div>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full border bg-gray-900 rounded-lg">
-          <thead>
-            <tr class="bg-gray-800 text-gray-100">
-              <th class="p-3 text-left">Date</th>
-              <th class="p-3 text-left">Total Quantity</th>
-              <th class="p-3 text-left">Total Value (£)</th>
-              <th class="p-3 text-left">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="summary in filteredActivitySummary" :key="summary.date" class="border-t hover:bg-gray-800">
-              <td class="p-3">{{ activity_date(summary.date) }}</td>
-              <td class="p-3">{{ summary.totalQuantity }}</td>
-              <td class="p-3">{{ summary.totalValue }}</td>
-              <td class="p-3">
-                <!-- Placeholder for future actions -->
-              </td>
-            </tr>
-            <tr v-if="!filteredActivitySummary.length" class="border-t">
-              <td colspan="4" class="p-3 text-gray-400 text-center">No activities for selected periods</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Modal for Unknown Parcel Types -->
-      <Modal :show="showUnknownModal" title="Unknown Parcel Types Detected" @close="showUnknownModal = false">
-        <div class="p-6">
-          <p class="text-gray-100 mb-6">The following parcel types were found in the HTML but do not exist in the selected round. Please choose to create them or ignore them.</p>
-          <div v-for="(type, index) in unknownParcelTypes" :key="type.name" class="mb-6 p-4 bg-gray-800 rounded-lg">
-            <h4 class="text-gray-100 font-semibold mb-2">{{ type.name }} (Quantity: {{ type.quantity }})</h4>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-100 mb-1">Max Weight (kg)</label>
-                <input
-                  v-model.number="unknownParcelTypes[index].max_weight"
-                  type="number"
-                  step="0.01"
+                  v-model="form.activity_date"
+                  type="date"
                   class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
                   required
                 />
               </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-100 mb-1">Max Length (cm)</label>
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-100 mb-1">Quantity</label>
                 <input
-                  v-model.number="unknownParcelTypes[index].max_length"
+                  v-model="form.quantity"
                   type="number"
-                  step="0.01"
+                  min="0"
                   class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
                   required
                 />
               </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-100 mb-1">Rate (£)</label>
-                <input
-                  v-model.number="unknownParcelTypes[index].rate"
-                  type="number"
-                  step="0.01"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+              <div class="flex justify-end space-x-3">
+                <button
+                  @click="showEditModal = false"
+                  class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
+                >
+                  Update
+                </button>
               </div>
-            </div>
+            </form>
           </div>
-          <div class="flex justify-end space-x-3">
-            <button
-              @click="showUnknownModal = false"
-              class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
-            >
-              Cancel
-            </button>
-            <button
-              @click="ignoreUnknownParcelTypes"
-              class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded transition duration-200"
-            >
-              Ignore
-            </button>
-            <button
-              @click="createUnknownParcelTypes"
-              class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
-            >
-              Create
-            </button>
-          </div>
-        </div>
-      </Modal>
+        </Modal>
 
-      <!-- Add Modal -->
-      <Modal :show="showAddModal" title="Add Activity" @close="showAddModal = false">
-        <div class="p-6">
-          <form @submit.prevent="submitForm">
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
-              <select
-                v-model="form.parcel_type_id"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="" disabled>Select a parcel type</option>
-                <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
-                  {{ type.name }} ({{ type.round.name }})
-                </option>
-              </select>
-            </div>
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
-              <input
-                v-model="form.activity_date"
-                type="date"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Quantity</label>
-              <input
-                v-model="form.quantity"
-                type="number"
-                min="0"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
+        <!-- Delete Modal -->
+        <Modal :show="showDeleteModal" title="Delete Activity" @close="showDeleteModal = false">
+          <div class="p-6">
+            <p class="text-gray-100 mb-6">Are you sure you want to delete this activity?</p>
             <div class="flex justify-end space-x-3">
               <button
-                @click="showAddModal = false"
+                @click="showDeleteModal = false"
                 class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
               >
                 Cancel
               </button>
               <button
-                type="submit"
-                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
+                @click="deleteActivity"
+                class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded transition duration-200"
               >
-                Save
+                Delete
               </button>
             </div>
-          </form>
-        </div>
-      </Modal>
-
-      <!-- Edit Modal -->
-      <Modal :show="showEditModal" title="Edit Activity" @close="showEditModal = false">
-        <div class="p-6">
-          <form @submit.prevent="submitForm">
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
-              <select
-                v-model="form.parcel_type_id"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="" disabled>Select a parcel type</option>
-                <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
-                  {{ type.name }} ({{ type.round.name }})
-                </option>
-              </select>
-            </div>
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
-              <input
-                v-model="form.activity_date"
-                type="date"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-100 mb-1">Quantity</label>
-              <input
-                v-model="form.quantity"
-                type="number"
-                min="0"
-                class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div class="flex justify-end space-x-3">
-              <button
-                @click="showEditModal = false"
-                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200"
-              >
-                Update
-              </button>
-            </div>
-          </form>
-        </div>
-      </Modal>
-
-      <!-- Delete Modal -->
-      <Modal :show="showDeleteModal" title="Delete Activity" @close="showDeleteModal = false">
-        <div class="p-6">
-          <p class="text-gray-100 mb-6">Are you sure you want to delete this activity?</p>
-          <div class="flex justify-end space-x-3">
-            <button
-              @click="showDeleteModal = false"
-              class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
-            >
-              Cancel
-            </button>
-            <button
-              @click="deleteActivity"
-              class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded transition duration-200"
-            >
-              Delete
-            </button>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      </div>
     </div>
   </AppLayout>
 </template>
