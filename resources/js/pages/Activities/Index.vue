@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
-import Modal from '@/Components/Modal.vue';
+import Modal from '@/components/Modal.vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import moment from 'moment';
 import { type BreadcrumbItem } from '@/types';
