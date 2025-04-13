@@ -49,9 +49,9 @@ import { Link } from '@inertiajs/vue3';
   </div>
 </template>
 
-<script>
-import Dropdown from '@/Components/Dropdown.vue';
-import DropdownLink from '@/Components/DropdownLink.vue';
+<script lang="ts">
+import Dropdown from '@/components/Dropdown.vue';
+import DropdownLink from '@/components/DropdownLink.vue';
 
 export default {
   components: {

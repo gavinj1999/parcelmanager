@@ -2,7 +2,7 @@
 import AppLayout from '@/layouts/AppLayout.vue';
 import { ref } from 'vue';
 import { router, Head } from '@inertiajs/vue3';
-import Modal from '@/Components/Modal.vue';
+import Modal from '@/components/Modal.vue';
 import { type BreadcrumbItem } from '@/types';
 const props = defineProps({
   rounds: Array,
