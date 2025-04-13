@@ -9,9 +9,24 @@ import { BookOpen, Folder, LayoutGrid } from 'lucide-vue-next';
 import AppLogo from './AppLogo.vue';
 
 const mainNavItems: NavItem[] = [
+
     {
-        title: 'Dashboard',
-        href: '/dashboard',
+        title: 'Rounds',
+        href: '/rounds',
+        icon: LayoutGrid,
+    },
+    {
+        title: 'Date Periods',
+        href: '/date-periods',
+        icon: LayoutGrid,
+    },
+    {
+        title: 'Activities',
+        href: '/activities',
+        icon: LayoutGrid,
+    },    {
+        title: 'Parcel Types',
+        href: '/parcel-types',
         icon: LayoutGrid,
     },
 ];

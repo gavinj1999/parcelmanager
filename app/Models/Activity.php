@@ -9,4 +9,16 @@ class Activity extends Model
 {
     /** @use HasFactory<\Database\Factories\ActivityFactory> */
     use HasFactory;
+    protected $fillable = ['user_id', 'parcel_type_id', 'activity_date', 'quantity'];
+    protected $dates = ['activity_date'];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function parcelType()
+    {
+        return $this->belongsTo(ParcelType::class);
+    }
 }
