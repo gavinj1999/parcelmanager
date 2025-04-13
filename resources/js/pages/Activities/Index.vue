@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
-import Modal from '@/components/Modal.vue';
+import Modal from '@/Components/Modal.vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import moment from 'moment';
 import { type BreadcrumbItem } from '@/types';
@@ -13,13 +13,12 @@ const breadcrumbs: BreadcrumbItem[] = [
   },
 ];
 
-// Define props with a fallback for datePeriods
 const props = defineProps({
   activities: { type: Array, default: () => [] },
   parcelTypes: { type: Array, default: () => [] },
   rounds: { type: Array, default: () => [] },
-  datePeriods: { type: Array, default: () => [] }, // Default to empty array
-  date_periods: { type: Array, default: () => [] }, // Fallback for snake_case
+  datePeriods: { type: Array, default: () => [] },
+  date_periods: { type: Array, default: () => [] },
 });
 
 // Debug: Log all props to verify what's being passed
@@ -27,16 +26,16 @@ onMounted(() => {
   console.log('All props on mount:', props);
   console.log('datePeriods on mount:', props.datePeriods);
   console.log('date_periods on mount:', props.date_periods);
+  console.log('Activities:', props.activities);
+  console.log('Rounds:', props.rounds);
 });
 
 // Loading state to ensure props are ready
 const isLoading = ref(true);
 onMounted(() => {
-  // Immediately check if datePeriods or date_periods is available
   if (props.datePeriods?.length || props.date_periods?.length) {
     isLoading.value = false;
   } else {
-    // Watch for changes in props if initially undefined
     const unwatch = watch(
       () => [props.datePeriods, props.date_periods],
       ([newDatePeriods, newDatePeriodsSnake]) => {
@@ -46,7 +45,6 @@ onMounted(() => {
         }
       }
     );
-    // Fallback after 2 seconds to prevent hanging
     setTimeout(() => {
       isLoading.value = false;
     }, 2000);
@@ -233,6 +231,19 @@ const form = ref({
   quantity: '',
 });
 
+// State for Activity Details Modal
+const showDetailsModal = ref(false);
+const selectedDate = ref<string | null>(null);
+const selectedRoundId = ref<number | null>(null);
+const activitiesForDateAndRound = computed(() => {
+  if (!selectedDate.value || selectedRoundId.value === null) return [];
+  return props.activities.filter(activity => {
+    const matchesDate = activity.activity_date === selectedDate.value;
+    const matchesRound = activity.parcel_type?.round_id === selectedRoundId.value;
+    return matchesDate && matchesRound;
+  });
+});
+
 const resetForm = () => {
   form.value = { id: null, parcel_type_id: null, activity_date: '', quantity: '' };
 };
@@ -255,6 +266,12 @@ const openEditModal = (activity) => {
 const openDeleteModal = (activity) => {
   form.value = { id: activity.id };
   showDeleteModal.value = true;
+};
+
+const openDetailsModal = (date: string, roundId: number) => {
+  selectedDate.value = date;
+  selectedRoundId.value = roundId;
+  showDetailsModal.value = true;
 };
 
 const submitForm = () => {
@@ -313,7 +330,6 @@ const calculateTotalValue = (activity) => {
 };
 
 // Period filter for Activity Summary (checkbox dropdown)
-// Use date_periods if datePeriods is not available
 const safeDatePeriods = computed(() => {
   const periods = props.datePeriods?.length ? props.datePeriods : props.date_periods;
   if (!periods || !Array.isArray(periods)) return [];
@@ -321,7 +337,7 @@ const safeDatePeriods = computed(() => {
 });
 
 // Find the default period containing today's date (2025-04-13)
-const today = moment('2025-04-13'); // Use moment() for current date in production
+const today = moment('2025-04-13');
 const defaultPeriod = computed(() => {
   if (!safeDatePeriods.value.length) return null;
   return safeDatePeriods.value.find(period =>
@@ -355,18 +371,22 @@ const handlePeriodChange = () => {
   }
 };
 
-// Filter activities by selected periods
+// Filter activities by selected periods and group by date and round
 const filteredActivitySummary = computed(() => {
   const includeAll = selectedPeriodIds.value.length === 0 || selectedPeriodIds.value.includes('all');
   const periods = includeAll
     ? safeDatePeriods.value
     : safeDatePeriods.value.filter(period => selectedPeriodIds.value.includes(String(period.id)));
 
-  // Map activities to their corresponding period
-  const summaryByDate = {};
+  // Group activities by date and round
+  const summaryByDateAndRound: { [key: string]: { date: string, roundId: number, roundName: string, totalQuantity: number, totalValue: number } } = {};
+
   props.activities.forEach(activity => {
     const date = moment(activity.activity_date);
     const dateStr = activity.activity_date;
+    const roundId = activity.parcel_type?.round_id ?? 0; // Fallback to 0 if round_id is null
+    const round = props.rounds.find(r => r.id === roundId);
+    const roundName = round ? round.name : `Unknown Round (ID: ${roundId})`;
 
     // Find the period this activity belongs to
     const activityPeriod = safeDatePeriods.value.find(period =>
@@ -378,20 +398,23 @@ const filteredActivitySummary = computed(() => {
       return;
     }
 
-    if (!summaryByDate[dateStr]) {
-      summaryByDate[dateStr] = {
+    const key = `${dateStr}-${roundId}`;
+    if (!summaryByDateAndRound[key]) {
+      summaryByDateAndRound[key] = {
         date: dateStr,
+        roundId: roundId,
+        roundName,
         totalQuantity: 0,
         totalValue: 0,
       };
     }
 
-    summaryByDate[dateStr].totalQuantity += activity.quantity;
-    summaryByDate[dateStr].totalValue += calculateTotalValue(activity);
+    summaryByDateAndRound[key].totalQuantity += activity.quantity;
+    summaryByDateAndRound[key].totalValue += calculateTotalValue(activity);
   });
 
   // Convert to array and sort by date (descending)
-  return Object.values(summaryByDate)
+  return Object.values(summaryByDateAndRound)
     .map(item => ({
       ...item,
       totalValue: `£${item.totalValue.toFixed(2)}`,
@@ -447,7 +470,8 @@ const sortBy = (key) => {
   <Head title="Activities" />
 
   <AppLayout :breadcrumbs="breadcrumbs">
-    <div class="p-6 max-w-7xl mx-auto">
+    <!-- Set a custom width to ensure the container is wide enough -->
+    <div class="p-6" style="max-width: 1600px;">
       <h1 class="text-2xl font-bold mb-6 text-gray-100">Activities</h1>
 
       <!-- Loading State -->
@@ -557,7 +581,7 @@ const sortBy = (key) => {
                 <div class="flex justify-end">
                   <button
                     type="submit"
-                    class="bg-blue-6hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
                     :disabled="!defaultForm.round_id || isSubmitting"
                   >
                     {{ isSubmitting ? 'Saving...' : 'Record Activities' }}
@@ -642,14 +666,18 @@ const sortBy = (key) => {
             <thead>
               <tr class="bg-gray-800 text-gray-100">
                 <th class="p-3 text-left">Date</th>
+                <th class="p-3 text-left">Round</th>
                 <th class="p-3 text-left">Total Quantity</th>
                 <th class="p-3 text-left">Total Value (£)</th>
                 <th class="p-3 text-left">Actions</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="summary in filteredActivitySummary" :key="summary.date" class="border-t hover:bg-gray-800">
-                <td class="p-3">{{ activity_date(summary.date) }}</td>
+              <tr v-for="summary in filteredActivitySummary" :key="`${summary.date}-${summary.roundId}`" class="border-t hover:bg-gray-800">
+                <td class="p-3 cursor-pointer text-blue-400 hover:underline" @click="openDetailsModal(summary.date, summary.roundId)">
+                  {{ activity_date(summary.date) }}
+                </td>
+                <td class="p-3">{{ summary.roundName }}</td>
                 <td class="p-3">{{ summary.totalQuantity }}</td>
                 <td class="p-3">{{ summary.totalValue }}</td>
                 <td class="p-3">
@@ -657,7 +685,7 @@ const sortBy = (key) => {
                 </td>
               </tr>
               <tr v-if="!filteredActivitySummary.length" class="border-t">
-                <td colspan="4" class="p-3 text-gray-400 text-center">No activities for selected periods</td>
+                <td colspan="5" class="p-3 text-gray-400 text-center">No activities for selected periods</td>
               </tr>
             </tbody>
           </table>
@@ -738,7 +766,7 @@ const sortBy = (key) => {
                 >
                   <option value="" disabled>Select a parcel type</option>
                   <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
-                    {{ type.name }} ({{ type.round.name }})
+                    {{ type.name }} ({{ type.round?.name ?? 'No Round' }})
                   </option>
                 </select>
               </div>
@@ -792,7 +820,7 @@ const sortBy = (key) => {
                 >
                   <option value="" disabled>Select a parcel type</option>
                   <option v-for="type in parcelTypes" :key="type.id" :value="type.id">
-                    {{ type.name }} ({{ type.round.name }})
+                    {{ type.name }} ({{ type.round?.name ?? 'No Round' }})
                   </option>
                 </select>
               </div>
@@ -849,6 +877,58 @@ const sortBy = (key) => {
                 class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded transition duration-200"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <!-- Activity Details Modal -->
+        <Modal :show="showDetailsModal" :title="`Activities for ${selectedDate ? activity_date(selectedDate.value) : ''}`" @close="showDetailsModal = false">
+          <div class="p-6">
+            <div v-if="activitiesForDateAndRound.length">
+              <div class="overflow-x-auto">
+                <table class="w-full border bg-gray-900 rounded-lg">
+                  <thead>
+                    <tr class="bg-gray-800 text-gray-100">
+                      <th class="p-3 text-left">Parcel Type</th>
+                      <th class="p-3 text-left">Quantity</th>
+                      <th class="p-3 text-left">Value (£)</th>
+                      <th class="p-3 text-left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="activity in activitiesForDateAndRound" :key="activity.id" class="border-t hover:bg-gray-800">
+                      <td class="p-3">{{ activity.parcel_type?.name || 'Unknown' }}</td>
+                      <td class="p-3">{{ activity.quantity }}</td>
+                      <td class="p-3">{{ `£${calculateTotalValue(activity).toFixed(2)}` }}</td>
+                      <td class="p-3 flex space-x-2">
+                        <button
+                          @click="openEditModal(activity)"
+                          class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded transition duration-200"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          @click="openDeleteModal(activity)"
+                          class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition duration-200"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div v-else class="text-gray-400 text-center">
+              No activities found for this date and round.
+            </div>
+            <div class="flex justify-end mt-6">
+              <button
+                @click="showDetailsModal = false"
+                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
+              >
+                Close
               </button>
             </div>
           </div>

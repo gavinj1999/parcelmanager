@@ -20,4 +20,9 @@ class Round extends Model
     {
         return $this->hasMany(ParcelType::class);
     }
+
+    public function parcel_types()
+    {
+        return $this->hasMany(ParcelType::class, 'round_id', 'id');
+    }
 }

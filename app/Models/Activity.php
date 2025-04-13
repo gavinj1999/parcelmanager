@@ -21,4 +21,9 @@ class Activity extends Model
     {
         return $this->belongsTo(ParcelType::class);
     }
+
+    public function parcel_type()
+    {
+        return $this->belongsTo(ParcelType::class, 'parcel_type_id', 'id');
+    }
 }

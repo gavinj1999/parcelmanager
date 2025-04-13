@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DatePeriod;
 use App\Models\Activity;
 use App\Models\ParcelType;
 use App\Models\Round;
@@ -12,44 +13,29 @@ class ActivityController extends Controller
 {
     public function index()
     {
+        // Fetch the date periods
+        $datePeriods = DatePeriod::select('id', 'name', 'start_date', 'end_date')->get()->toArray();
+
+        // Fetch activities with nested relationships
+        $activities = Activity::with(['parcel_type.round'])->get()->toArray();
+
+        // Fetch rounds with parcel types
+        $rounds = Round::with('parcel_types')->get()->toArray();
+
+        // Fetch parcel types with their round
+        $parcelTypes = ParcelType::with('round')->get()->toArray();
+
+        // Debug: Log the data to ensure relationships are loaded
+        \Log::info('Activities with relationships:', $activities);
+        \Log::info('Rounds:', $rounds);
+        \Log::info('Parcel Types:', $parcelTypes);
+        \Log::info('Date Periods:', $datePeriods);
+
         return Inertia::render('Activities/Index', [
-            'activities' => Activity::where('user_id', auth()->id())
-                ->with(['parcelType' => function ($query) {
-                    $query->select('id', 'name', 'rate', 'round_id')->with(['round' => function ($q) {
-                        $q->select('id', 'name');
-                    }]);
-                }])
-                ->get()
-                ->map(function ($activity) {
-                    return [
-                        'id' => $activity->id,
-                        'parcel_type' => $activity->parcelType ? [
-                            'id' => $activity->parcelType->id,
-                            'name' => $activity->parcelType->name,
-                            'rate' => $activity->parcelType->rate,
-                            'round' => $activity->parcelType->round,
-                        ] : null,
-                        'activity_date' => $activity->activity_date,
-                        'quantity' => $activity->quantity,
-                    ];
-                }),
-            'parcelTypes' => \App\Models\ParcelType::whereHas('round', fn($q) => $q->where('user_id', auth()->id()))
-                ->with('round')
-                ->get(),
-            'rounds' => Round::where('user_id', auth()->id())
-                ->get()
-                ->map(function ($round) {
-                    return [
-                        'id' => $round->id,
-                        'name' => $round->name,
-                        'parcel_types' => $round->parcelTypes->map(function ($parcelType) {
-                            return [
-                                'id' => $parcelType->id,
-                                'name' => $parcelType->name,
-                            ];
-                        }),
-                    ];
-                }),
+            'activities' => $activities,
+            'parcelTypes' => $parcelTypes,
+            'rounds' => $rounds,
+            'datePeriods' => $datePeriods ?: [],
         ]);
     }
 
