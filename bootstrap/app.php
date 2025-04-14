@@ -22,6 +22,14 @@ return Application::configure(basePath: dirname(__DIR__))
             AddLinkHeadersForPreloadedAssets::class,
         ]);
     })
+
+    ->withMiddleware(function (Middleware $middleware) {
+        $middleware->validateCsrfTokens(except: [
+            'stripe/*',
+            'api/*',
+        ]);
+    })
+
     ->withExceptions(function (Exceptions $exceptions) {
         //
     })->create();
