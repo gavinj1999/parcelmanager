@@ -2,65 +2,55 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Report;
-use App\Http\Requests\StoreReportRequest;
-use App\Http\Requests\UpdateReportRequest;
+use App\Models\Activity;
+use App\Models\DatePeriod;
+use App\Models\Round;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Inertia\Inertia;
 
 class ReportController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
-    }
+        // Cache date periods for 24 hours
+        $datePeriods = Cache::remember('date_periods', 60 * 60 * 24, function () {
+            return DatePeriod::select('id', 'name', 'start_date', 'end_date')
+                ->get()
+                ->toArray();
+        });
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
+        // Fetch activities with necessary relationships
+        $activities = Activity::select('id', 'activity_date', 'parcel_type_id', 'quantity')
+            ->with([
+                'parcel_type' => function ($query) {
+                    $query->select('id', 'name', 'round_id', 'rate');
+                },
+                'parcel_type.round' => function ($query) {
+                    $query->select('id', 'name');
+                },
+            ])
+            ->get()
+            ->toArray();
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(StoreReportRequest $request)
-    {
-        //
-    }
+        // Cache rounds for 24 hours
+        $rounds = Cache::remember('rounds', 60 * 60 * 24, function () {
+            return Round::select('id', 'name')
+                ->get()
+                ->toArray();
+        });
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(Report $report)
-    {
-        //
-    }
+        // Log the data to verify
+        Log::info('Reports data sent to frontend:', [
+            'activities' => $activities,
+            'rounds' => $rounds,
+            'datePeriods' => $datePeriods,
+        ]);
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Report $report)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(UpdateReportRequest $request, Report $report)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Report $report)
-    {
-        //
+        return Inertia::render('Reports/Index', [
+            'activities' => $activities,
+            'rounds' => $rounds,
+            'datePeriods' => $datePeriods ?: [],
+        ]);
     }
 }

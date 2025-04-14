@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
-import Modal from '@/components/Modal.vue';
+import Modal from '@/Components/Modal.vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import moment from 'moment';
 import { type BreadcrumbItem } from '@/types';
@@ -14,7 +14,7 @@ const breadcrumbs: BreadcrumbItem[] = [
 ];
 
 const props = defineProps({
-  activities: { type: Array, default: () => [] },
+  activities: { type: Object, default: () => ({ data: [] }) },
   parcelTypes: { type: Array, default: () => [] },
   rounds: { type: Array, default: () => [] },
   datePeriods: { type: Array, default: () => [] },
@@ -235,14 +235,7 @@ const form = ref({
 const showDetailsModal = ref(false);
 const selectedDate = ref<string | null>(null);
 const selectedRoundId = ref<number | null>(null);
-const activitiesForDateAndRound = computed(() => {
-  if (!selectedDate.value || selectedRoundId.value === null) return [];
-  return props.activities.filter(activity => {
-    const matchesDate = activity.activity_date === selectedDate.value;
-    const matchesRound = activity.parcel_type?.round_id === selectedRoundId.value;
-    return matchesDate && matchesRound;
-  });
-});
+const activitiesForDateAndRound = ref([]);
 
 const resetForm = () => {
   form.value = { id: null, parcel_type_id: null, activity_date: '', quantity: '' };
@@ -268,10 +261,19 @@ const openDeleteModal = (activity) => {
   showDeleteModal.value = true;
 };
 
-const openDetailsModal = (date: string, roundId: number) => {
+const openDetailsModal = async (date: string, roundId: number) => {
   selectedDate.value = date;
   selectedRoundId.value = roundId;
-  showDetailsModal.value = true;
+  try {
+    const response = await fetch(`/activities/details?date=${date}&round_id=${roundId}`);
+    const data = await response.json();
+    activitiesForDateAndRound.value = Array.isArray(data) ? data : [];
+    showDetailsModal.value = true;
+  } catch (error) {
+    console.error('Error fetching activities for modal:', error);
+    activitiesForDateAndRound.value = [];
+    showDetailsModal.value = true;
+  }
 };
 
 const submitForm = () => {
@@ -381,10 +383,11 @@ const filteredActivitySummary = computed(() => {
   // Group activities by date and round
   const summaryByDateAndRound: { [key: string]: { date: string, roundId: number, roundName: string, totalQuantity: number, totalValue: number } } = {};
 
-  props.activities.forEach(activity => {
+  const activities = props.activities?.data || [];
+  activities.forEach(activity => {
     const date = moment(activity.activity_date);
     const dateStr = activity.activity_date;
-    const roundId = activity.parcel_type?.round_id ?? 0; // Fallback to 0 if round_id is null
+    const roundId = activity.parcel_type?.round_id ?? 0;
     const round = props.rounds.find(r => r.id === roundId);
     const roundName = round ? round.name : `Unknown Round (ID: ${roundId})`;
 
@@ -422,36 +425,39 @@ const filteredActivitySummary = computed(() => {
     .sort((a, b) => moment(b.date).diff(moment(a.date)));
 });
 
-// Compute monetary value per period with sorting
+// Compute monetary value per date period
 const sortKey = ref('period');
 const sortOrder = ref(1); // 1 for ascending, -1 for descending
 
+// Compute monetary value per date period
 const monetaryValuePerPeriod = computed(() => {
-  const periods = {};
-  props.activities.forEach(activity => {
-    if (!activity.parcel_type || !activity.parcel_type.rate) return;
+  const periods = safeDatePeriods.value
+    .map(period => {
+      const activitiesInPeriod = (props.activities?.data || []).filter(activity => {
+        const activityDate = moment(activity.activity_date);
+        return activityDate.isBetween(moment(period.start_date), moment(period.end_date), undefined, '[]');
+      });
 
-    const date = new Date(activity.activity_date);
-    const period = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      const totalValue = activitiesInPeriod.reduce((sum, activity) => {
+        if (!activity.parcel_type || !activity.parcel_type.rate) return sum;
+        return sum + (activity.quantity * activity.parcel_type.rate);
+      }, 0);
 
-    if (!periods[period]) {
-      periods[period] = 0;
-    }
+      return {
+        period: period.name || `${moment(period.start_date).format('DD/MM/YYYY')} - ${moment(period.end_date).format('DD/MM/YYYY')}`,
+        totalValue: `£${totalValue.toFixed(2)}`,
+        activitiesInPeriod, // Store activities for filtering
+      };
+    })
+    .filter(period => period.activitiesInPeriod.length > 0); // Only include periods with activities
 
-    const value = activity.quantity * activity.parcel_type.rate;
-    periods[period] += value;
-  });
-
-  return Object.entries(periods).map(([period, totalValue]) => ({
-    period,
-    totalValue: `£${totalValue.toFixed(2)}`,
-  }));
+  return periods;
 });
 
 const sortedMonetaryValuePerPeriod = computed(() => {
   return [...monetaryValuePerPeriod.value].sort((a, b) => {
-    const aValue = a[sortKey.value].replace('£', '');
-    const bValue = b[sortKey.value].replace('£', '');
+    const aValue = sortKey.value === 'totalValue' ? a[sortKey.value].replace('£', '') : a[sortKey.value];
+    const bValue = sortKey.value === 'totalValue' ? b[sortKey.value].replace('£', '') : b[sortKey.value];
     return sortOrder.value * (aValue.localeCompare ? aValue.localeCompare(bValue) : aValue - bValue);
   });
 });
@@ -464,13 +470,17 @@ const sortBy = (key) => {
     sortOrder.value = 1;
   }
 };
+
+// Pagination handler
+const changePage = (page) => {
+  router.get('/activities', { page }, { preserveState: true, preserveScroll: true });
+};
 </script>
 
 <template>
   <Head title="Activities" />
 
   <AppLayout :breadcrumbs="breadcrumbs">
-    <!-- Set a custom width to ensure the container is wide enough -->
     <div class="p-6" style="max-width: 1600px;">
       <h1 class="text-2xl font-bold mb-6 text-gray-100">Activities</h1>
 
@@ -592,13 +602,13 @@ const sortBy = (key) => {
           </div>
         </div>
 
-        <!-- Monetary Value per Period Table -->
-        <h2 class="text-lg font-semibold text-gray-100 mb-4">Monetary Value per Period</h2>
+        <!-- Monetary Value per Date Period Table -->
+        <h2 class="text-lg font-semibold text-gray-100 mb-4">Monetary Value per Date Period</h2>
         <div class="overflow-x-auto mb-8">
           <table class="w-full border bg-gray-900 rounded-lg">
             <thead>
               <tr class="bg-gray-800 text-gray-100">
-                <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('period')">Period</th>
+                <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('period')">Date Period</th>
                 <th class="p-3 text-left cursor-pointer hover:bg-gray-700" @click="sortBy('totalValue')">Total Value (£)</th>
               </tr>
             </thead>
@@ -689,6 +699,21 @@ const sortBy = (key) => {
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="mt-4 flex justify-center">
+          <nav class="flex space-x-2">
+            <button
+              v-for="link in props.activities?.links || []"
+              :key="link.label"
+              @click="changePage(link.label)"
+              class="px-3 py-1 rounded"
+              :class="link.active ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'"
+              :disabled="!link.url"
+              v-html="link.label"
+            ></button>
+          </nav>
         </div>
 
         <!-- Modal for Unknown Parcel Types -->
