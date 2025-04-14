@@ -7,6 +7,7 @@ use App\Http\Controllers\ParcelTypeController;
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\AutomationController;
+use App\Http\Controllers\Api\ImageUploadController;
 use Inertia\Inertia;
 
 
@@ -28,6 +29,8 @@ Route::middleware('auth')->group(function () {
     Route::post('activities/bulk', [ActivityController::class, 'storeBulk'])->name('activities.bulk');
     Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
 });
+
+Route::middleware('auth:sanctum')->post('/upload-image', [ImageUploadController::class, 'store']);
 
 Route::post('/automate', [AutomationController::class, 'automate']);
 Route::get('/automation', function () {

@@ -20,18 +20,23 @@ class ReportController extends Controller
                 ->toArray();
         });
 
-        // Fetch activities with necessary relationships
-        $activities = Activity::select('id', 'activity_date', 'parcel_type_id', 'quantity')
-            ->with([
-                'parcel_type' => function ($query) {
-                    $query->select('id', 'name', 'round_id', 'rate');
-                },
-                'parcel_type.round' => function ($query) {
-                    $query->select('id', 'name');
-                },
-            ])
-            ->get()
-            ->toArray();
+        // Fetch activities with necessary relationships, including images
+        $activities = Cache::remember('activities_with_images', 60 * 60 * 24, function () {
+            return Activity::select('id', 'activity_date', 'parcel_type_id', 'quantity')
+                ->with([
+                    'parcel_type' => function ($query) {
+                        $query->select('id', 'name', 'round_id', 'rate');
+                    },
+                    'parcel_type.round' => function ($query) {
+                        $query->select('id', 'name');
+                    },
+                    'images' => function ($query) {
+                        $query->select('id', 'activity_id', 'image_path');
+                    },
+                ])
+                ->get()
+                ->toArray();
+        });
 
         // Cache rounds for 24 hours
         $rounds = Cache::remember('rounds', 60 * 60 * 24, function () {

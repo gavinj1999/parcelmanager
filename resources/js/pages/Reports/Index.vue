@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import AppLayout from '@/layouts/AppLayout.vue';
+import AppLayout from '@/Layouts/AppLayout.vue';
+import { Head } from '@inertiajs/vue3';
 import moment from 'moment';
 import { type BreadcrumbItem } from '@/types';
 import { Pie, Bar } from 'vue-chartjs';
@@ -37,13 +38,25 @@ const breadcrumbs: BreadcrumbItem[] = [
   },
 ];
 
-const props = defineProps({
-  activities: { type: Array, default: () => [] },
-  rounds: { type: Array, default: () => [] },
-  datePeriods: { type: Array, default: () => [] },
-});
+const props = defineProps<{
+  activities: Array<{
+    id: number;
+    activity_date: string;
+    quantity: number;
+    parcel_type: {
+      id: number;
+      name: string;
+      rate: number;
+      round_id: number;
+      round: { id: number; name: string } | null;
+    } | null;
+    images?: Array<{ id: number; image_path: string }>;
+  }>;
+  rounds: Array<{ id: number; name: string }>;
+  datePeriods: Array<{ id: number; name?: string; start_date: string; end_date: string }>;
+}>();
 
-// Debug: Log all props to verify what's being passed
+// Debug: Log props
 onMounted(() => {
   console.log('All props on mount:', props);
   console.log('datePeriods on mount:', props.datePeriods);
@@ -51,7 +64,7 @@ onMounted(() => {
   console.log('Rounds:', props.rounds);
 });
 
-// Period filter (checkbox dropdown)
+// Period filter
 const safeDatePeriods = computed(() => {
   if (!props.datePeriods || !Array.isArray(props.datePeriods)) return [];
   return props.datePeriods.filter(
@@ -59,7 +72,6 @@ const safeDatePeriods = computed(() => {
   );
 });
 
-// Find the default period containing the current month (April 2025)
 const today = moment('2025-04-14');
 const defaultPeriod = computed(() => {
   if (!safeDatePeriods.value.length) return null;
@@ -79,10 +91,8 @@ const selectedPeriodIds = ref<string[]>(
   defaultPeriod.value ? [String(defaultPeriod.value.id)] : []
 );
 
-// Checkbox dropdown state
 const showPeriodDropdown = ref(false);
 
-// Handle "All Periods" checkbox
 const handleAllPeriodsChange = () => {
   if (selectedPeriodIds.value.includes('all')) {
     selectedPeriodIds.value = ['all'];
@@ -96,7 +106,6 @@ const handleAllPeriodsChange = () => {
   }
 };
 
-// Handle individual period checkbox
 const handlePeriodChange = () => {
   if (selectedPeriodIds.value.includes('all')) {
     selectedPeriodIds.value = selectedPeriodIds.value.filter(
@@ -111,7 +120,6 @@ const handlePeriodChange = () => {
   }
 };
 
-// Filter activities by selected periods
 const filteredActivities = computed(() => {
   const includeAll =
     selectedPeriodIds.value.length === 0 ||
@@ -140,19 +148,17 @@ const filteredActivities = computed(() => {
   });
 });
 
-// Calculate monetary sum by round and total
+// Monetary sum by round
 const monetarySumByRound = computed(() => {
-  const roundSums: { [key: number]: { roundName: string; totalValue: number } } =
-    {};
+  const roundSums: { [key: number]: { roundName: string; totalValue: number } } = {};
   let overallTotal = 0;
 
   filteredActivities.value.forEach(activity => {
     const roundId = activity.parcel_type?.round_id ?? 0;
-    const round = props.rounds.find(r => r.id === roundId);
+    const round = activity.parcel_type?.round || props.rounds.find(r => r.id === roundId);
     const roundName = round ? round.name : `Unknown Round (ID: ${roundId})`;
 
-    const value =
-      (activity.parcel_type?.rate ?? 0) * (activity.quantity || 0);
+    const value = (activity.parcel_type?.rate ?? 0) * (activity.quantity || 0);
 
     if (!roundSums[roundId]) {
       roundSums[roundId] = { roundName, totalValue: 0 };
@@ -173,7 +179,7 @@ const monetarySumByRound = computed(() => {
   };
 });
 
-// Pie chart: Monthly breakdown of activity by parcel type
+// Pie chart
 const pieChartData = computed(() => {
   const parcelTypeQuantities: { [key: string]: number } = {};
 
@@ -217,7 +223,7 @@ const pieChartOptions = {
     legend: {
       position: 'top',
       labels: {
-        color: '#D1D5DB', // Tailwind gray-300
+        color: '#D1D5DB',
       },
     },
     title: {
@@ -228,21 +234,17 @@ const pieChartOptions = {
   },
 };
 
-// Bar chart: Sum of monetary value by date period with trend line
-const showTrendLine = ref(true); // New ref for trend line toggle
+// Bar chart
+const showTrendLine = ref(true);
 
 const barChartData = computed(() => {
-  // Current date for filtering future periods
   const currentDate = moment('2025-04-14');
-
-  // Sort periods by start_date to ensure chronological order
   const sortedPeriods = [...safeDatePeriods.value].sort((a, b) =>
     moment(a.start_date).diff(moment(b.start_date))
   );
 
   const periodValues: { [key: string]: number } = {};
-  const periodData: { name: string; value: number; endDate: moment.Moment }[] =
-    [];
+  const periodData: { name: string; value: number; endDate: moment.Moment }[] = [];
 
   sortedPeriods.forEach(period => {
     const activitiesInPeriod = (props.activities || []).filter(activity => {
@@ -267,7 +269,6 @@ const barChartData = computed(() => {
         period.end_date
       ).format('DD/MM/YYYY')}`;
 
-    // Only include periods before or on current date, or with activity
     const isFuture = periodEndDate.isAfter(currentDate, 'day');
     if (!isFuture || totalValue > 0) {
       periodValues[periodName] = totalValue;
@@ -278,7 +279,6 @@ const barChartData = computed(() => {
   const labels = periodData.map(p => p.name);
   const data = periodData.map(p => p.value);
 
-  // Calculate trend line (simple linear regression)
   const trendData = [];
   if (data.length > 1) {
     const n = data.length;
@@ -319,7 +319,7 @@ const barChartData = computed(() => {
         borderWidth: 2,
         fill: false,
         tension: 0.1,
-        hidden: !showTrendLine.value, // Toggle visibility
+        hidden: !showTrendLine.value,
       },
     ],
   };
@@ -360,13 +360,43 @@ const barChartOptions = {
     },
   },
 };
+
+// Activity Summary
+const activitySummary = computed(() => {
+  const summary: { [key: string]: { date: string; count: number; images: string[] } } = {};
+
+  filteredActivities.value.forEach(activity => {
+    const date = moment(activity.activity_date).format('YYYY-MM-DD');
+    if (!summary[date]) {
+      summary[date] = {
+        date,
+        count: 0,
+        images: activity.images?.map(img => `/storage/${img.image_path}`) || [],
+      };
+    }
+    summary[date].count += activity.quantity || 0;
+  });
+
+  return Object.values(summary).sort((a, b) => moment(b.date).diff(moment(a.date)));
+});
+
+// Image Modal
+const selectedImage = ref<string | null>(null);
+
+const showImage = (imageUrl: string) => {
+  selectedImage.value = imageUrl;
+};
+
+const closeModal = () => {
+  selectedImage.value = null;
+};
 </script>
 
 <template>
   <Head title="Reports" />
 
   <AppLayout :breadcrumbs="breadcrumbs">
-    <div class="p-6" style="max-width: 1600px;">
+    <div class="p-6 mx-auto" style="max-width: 1600px;">
       <h1 class="text-2xl font-bold mb-6 text-gray-100">Reports</h1>
 
       <!-- Date Period Filter -->
@@ -459,7 +489,49 @@ const barChartOptions = {
         </table>
       </div>
 
-      <!-- Pie Chart: Monthly Breakdown of Activity by Parcel Type -->
+      <!-- Activity Summary -->
+      <h2 class="text-lg font-semibold text-gray-100 mb-4">
+        Activity Summary
+      </h2>
+      <div class="overflow-x-auto mb-8">
+        <table class="w-full border bg-gray-900 rounded-lg">
+          <thead>
+            <tr class="bg-gray-800 text-gray-100">
+              <th class="p-3 text-left">Date</th>
+              <th class="p-3 text-left">Total Quantity</th>
+              <th class="p-3 text-left">Images</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="summary in activitySummary"
+              :key="summary.date"
+              class="border-t hover:bg-gray-800"
+            >
+              <td class="p-3">
+                <button
+                  class="text-blue-400 hover:underline"
+                  @click="summary.images.length ? showImage(summary.images[0]) : null"
+                  :disabled="!summary.images.length"
+                >
+                  {{ summary.date }}
+                </button>
+              </td>
+              <td class="p-3">{{ summary.count }}</td>
+              <td class="p-3">
+                {{ summary.images.length ? `${summary.images.length} image(s)` : 'None' }}
+              </td>
+            </tr>
+            <tr v-if="!activitySummary.length" class="border-t">
+              <td colspan="3" class="p-3 text-gray-400 text-center">
+                No activities available
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pie Chart -->
       <h2 class="text-lg font-semibold text-gray-100 mb-4">
         Monthly Breakdown of Activity by Parcel Type
       </h2>
@@ -471,7 +543,7 @@ const barChartOptions = {
         />
       </div>
 
-      <!-- Bar Chart: Monetary Value by Date Period with Trend Line -->
+      <!-- Bar Chart -->
       <h2 class="text-lg font-semibold text-gray-100 mb-4">
         Monetary Value by Date Period
       </h2>
@@ -492,12 +564,32 @@ const barChartOptions = {
           class="max-h-96"
         />
       </div>
+
+      <!-- Image Modal -->
+      <div
+        v-if="selectedImage"
+        class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"
+        @click="closeModal"
+      >
+        <div class="relative" @click.stop>
+          <img
+            :src="selectedImage"
+            alt="Activity Image"
+            class="max-w-full max-h-[80vh] rounded-lg"
+          />
+          <button
+            class="absolute top-2 right-2 bg-gray-800 text-white rounded-full p-2"
+            @click="closeModal"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
     </div>
   </AppLayout>
 </template>
 
 <style scoped>
-/* Ensure the charts are responsive */
 canvas {
   max-width: 100%;
 }

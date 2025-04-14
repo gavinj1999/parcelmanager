@@ -26,4 +26,9 @@ class Activity extends Model
     {
         return $this->belongsTo(ParcelType::class, 'parcel_type_id', 'id');
     }
+
+    public function images()
+    {
+        return $this->hasMany(ActivityImage::class);
+    }
 }
