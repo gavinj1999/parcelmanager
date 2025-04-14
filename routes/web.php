@@ -30,7 +30,7 @@ Route::middleware('auth')->group(function () {
     Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
 });
 
-Route::middleware('auth:sanctum')->post('/upload-image', [ImageUploadController::class, 'store']);
+Route::middleware('auth:sanctum')->post('/api/upload-image', [ImageUploadController::class, 'store']);
 
 Route::post('/automate', [AutomationController::class, 'automate']);
 Route::get('/automation', function () {
